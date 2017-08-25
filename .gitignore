@@ -1,0 +1,6 @@
+*~
+*.pyc
+*.dat
+build
+example_scripts/*.log
+example_scripts/out
