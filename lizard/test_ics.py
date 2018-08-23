@@ -1,6 +1,12 @@
-from grid import *
-from power import pspec_normalised_by_sigma8_expansion, efstathiou, cosmological_perturbation_growth, readspec
-from uniform import load_glass
+"""
+Test power spectra of ICs
+(these functions are still a little rough, since they were written to analyse 
+actual snapshots)
+"""
+from __future__ import print_function, unicode_literals, absolute_import
+from .grid import *
+from .power import pspec_normalised_by_sigma8_expansion, efstathiou, cosmological_perturbation_growth, readspec
+from .uniform import load_glass
 from numpy import *
 from os import path
 
@@ -32,18 +38,18 @@ def test_disp_fft():
     ngrid = 128
     boxsize = 1000.0 # Mpc / h
     dx = float(boxsize)/ngrid
-    print 'Building displacement field'
+    print('Building displacement field')
     disp_grid = build_displacement(boxsize=boxsize, ngrid=ngrid, power_func=pspec, seed=12345)
 
-    print 'Poor mans divergence'
+    print('Poor mans divergence')
     
     dvg = (disp_grid[0] - roll(disp_grid[0], 1, 0)) + (disp_grid[1] - roll(disp_grid[1], 1, 1)) + (disp_grid[2] - roll(disp_grid[2], 1, 2))
     dvg *= 1.0/dx
     delta = -dvg # The overdensity field
 
-    print 'FFT back to spectra'
+    print('FFT back to spectra')
     modes = ifftn(delta)
-    print 'Making graphs'
+    print('Making graphs')
 
     pl.rcParams.update(latexParams)
     pl.figure(figsize=(3.32, 3.32), dpi=150)
@@ -76,11 +82,11 @@ def test_disp_field(redshift=50, boxsize=500.0):
     glass = path.join(path.dirname(path.abspath(__file__)), '../example_scripts/glass64.dat')
     uni_pts, uni_sizes = load_glass(glass, boxsize, repeat=1)
     uni_pts = uni_pts.T # go from (N,3) to (3,N) array
-    print 'pts in', uni_pts.min(), uni_pts.max()
-    print 'Building displacement field'
+    print('pts in', uni_pts.min(), uni_pts.max())
+    print('Building displacement field')
     disp_grid = build_displacement(boxsize=boxsize, ngrid=ngrid, power_func=pspec)
 
-    print 'Interpolating the displacement field'
+    print('Interpolating the displacement field')
 
     disps = interpolate_displacement_grid(uni_pts, disp_grid, boxsize, order=1) # displacement of all the points
 
@@ -100,12 +106,12 @@ def test_disp_field(redshift=50, boxsize=500.0):
     pl.xlabel(r'$x \; \rm Mpc/h$')
     pl.subplot(122)
 
-    print 'Making CIC'
+    print('Making CIC')
 #    modes = cic_modes(reshape(pos, (3, pos.shape[1])), boxsize, ngrid_modes)
     modes = cic_modes(pos, boxsize, ngrid_modes)
 
 
-    print 'Making power spectrum bins'
+    print('Making power spectrum bins')
     kmin,kmax,kvol,kmid_bins, powerspec, p_err = modes_to_pspec(modes, boxsize)
 
     pl.errorbar(kmid_bins, powerspec, yerr=p_err, fmt='o', label=r'$\rm CIC$')
@@ -140,7 +146,7 @@ def test_smooth():
 
 
 
-def test_readspec(name, omegaM, redshift, sigma8):
+def test_readspec(name, omegaM, redshift, sigma8,pspec=None):
     """ read power spectrum from file, compare with matter spec """
     from numpy import loadtxt
     import pylab as pl
@@ -152,6 +158,57 @@ def test_readspec(name, omegaM, redshift, sigma8):
     kmid_bins = 0.5 * (kmin+kmax)
 
     pl.errorbar(kmid_bins, powerspec, yerr=ps_err, fmt='o', label=r'$\rm CIC$')
+#    pl.loglog(kmid_bins, powerspec, 'o', label=r'$\rm CIC$')
+
+    a = 1.0 / (1.0+redshift)
+    if pspec is None:
+        pspec = pspec_normalised_by_sigma8_expansion(efstathiou, sigma8=sigma8, a=a, omegaM=omegaM, omegaL=1-omegaM)
+
+        pl.loglog(kmid_bins, pspec(kmid_bins), 'k', ls='--', label=r'$\rm Efstathiou$')
+
+        planck_file = path.join(path.dirname(path.abspath(__file__)), '../example_scripts/planck_2013.txt')
+    
+        planck = readspec(planck_file)
+        planck = pspec_normalised_by_sigma8_expansion(planck, sigma8=sigma8, a=a, omegaM=omegaM, omegaL=1-omegaM)    
+        pl.loglog(kmid_bins, planck(kmid_bins), 'r', ls='-', label=r'$\rm Planck$')
+    else:
+        k_fine = exp(linspace(log(kmid_bins.min()), log(kmid_bins.max()), 5000))
+        pspec = pspec_normalised_by_sigma8_expansion(pspec, sigma8=sigma8, a=a, omegaM=omegaM, omegaL=1-omegaM)        
+        pl.loglog(k_fine, pspec(k_fine), 'r', ls='-', label=r'$\rm Input \; spec$')
+    #pl.legend(frameon=False)
+    pl.legend().draw_frame(False)
+    pl.xlabel(r'$k \; \rm h\, Mpc^{-1}$')
+    pl.ylabel(r'$P(k)$')
+
+    #pl.imshow(modes[0].real)
+
+#    pl.savefig('snap_000_pspec.pdf')
+    pl.show()
+
+    return
+
+def test_readspec_zoom(names, omegaM, redshift, sigma8, zoom_spec_file=None):
+    """ read power spectrum from file, compare with matter spec """
+    from numpy import loadtxt
+    import pylab as pl
+#    from iccpy.figures import latexParams
+#    pl.rcParams.update(latexParams)
+    for name in names:
+        data = loadtxt(name)
+        kmin, kmax,kvol, powerspec, ps_err = data.transpose()
+        
+        kmid_bins = 0.5 * (kmin+kmax)
+        
+        pl.errorbar(kmid_bins, powerspec, yerr=ps_err, fmt='o', mec='none', label=r'$\rm CIC\; %s$'%name)
+
+    if zoom_spec_file is not None:
+        zoom_data = loadtxt(zoom_spec_file)
+        kmin, kmax,kvol, powerspec, ps_err = zoom_data.transpose()
+
+        zoom_kmid = 0.5 * (kmin+kmax)
+
+        pl.errorbar(zoom_kmid, powerspec, yerr=ps_err, fmt='o', color='r',mec='none', label=r'$\rm CIC\; sub-box$')
+        
 #    pl.loglog(kmid_bins, powerspec, 'o', label=r'$\rm CIC$')
 
     a = 1.0 / (1.0+redshift)
@@ -174,7 +231,7 @@ def test_readspec(name, omegaM, redshift, sigma8):
     #pl.imshow(modes[0].real)
 
 #    pl.savefig('snap_000_pspec.pdf')
-    pl.show()
+#    pl.show()
 
     return
     
