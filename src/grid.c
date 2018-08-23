@@ -299,7 +299,7 @@ int cloud_in_cell_3d_vel(const int num_pts, const int ngrid,
   return 0;
 }
 
-void gradient_5pt_3d(const int ngrid, const double *vals, double *restrict out)
+void gradient_5pt_3d(const int ngrid, const double *restrict vals, double *restrict out)
 {
   /*
     Calculate the gradient of a periodic 3-d lattice with finite differencing
@@ -333,38 +333,91 @@ void gradient_5pt_3d(const int ngrid, const double *vals, double *restrict out)
 	out[i] = 0.0;
       return;
     }
+
+  // Now do gradient for 2nd and 3rd dimensions
+  out += 1;
   for (int i=0;i<ngrid;i++)
     {
-      // Indices i-2, i-1,i+1,i+2 modulo ngrid
-      const size_t is[4] = {i>1 ? -2*n2 : (n-2)*n2,
-			    i>0 ? -n2 : (n-1) * n2, 
-			    i+1<ngrid ? n2 :  (1-n)*n2, 
-			    i+2<ngrid ? 2*n2 : (2-n)*n2};
+      // Values for gradient over 2nd axis
+      const double *vj0 = vals + (n-2)*n,
+	*vj1 = vals + (n-1)*n,
+	*vj2 = vals + n,
+	*vj3 = vals + 2*n;
 
-      for (size_t j=0;j<n;j++)
-	{
-	  // Indices j-2, j-1,j+1,j+2 modulo ngrid
-	  const size_t js[4] = {j>1 ? -2*n : (n-2)*n,
-				j>0 ? -n : (n-1) * n, 
-				j+1<ngrid ? n : (1-n)*n,
-				j+2<ngrid ? 2*n : (2-n)*n};
+      const double *v4 = vals+2;
 
-	  const size_t pt_ij = (i*ngrid+j)*n;
+      vals += n2; // used for wrap comparison
 
-	  // Indices of the stencil (k-2, k-1,k, k+1,k+2) modulo ngrid 
-	  // - bit of voodoo code (edit at own risk!)
-	  for (size_t kmm=pt_ij+ngrid-2,km=pt_ij+ngrid-1,ptk=pt_ij,kp=pt_ij+1,kpp=pt_ij+2;ptk<pt_ij+n;
-	       kmm=km,km=ptk++,kp=kpp, kpp=kpp+1<pt_ij+n? kpp+1 :pt_ij) 
+      for (int j=ngrid;j--; v4+=n)
+      	{
+	  // Values for gradient over 3rd axis 
+	  double v0 = v4[ngrid-4],
+	    v1 = v4[ngrid-3],
+	    v2 = *(v4-2), v3=*(v4-1);
+
+	  for (int col=ngrid; col--; out+=3)
 	    {
 	      // Find the gradients in each of three directions
-	      const double g0 = w0*(vals[ptk+is[0]] - vals[ptk+is[3]]) + w1*(vals[ptk+is[1]] - vals[ptk+is[2]]),
-		g1 = w0*(vals[ptk+js[0]]-vals[ptk+js[3]]) + w1*(vals[ptk+js[1]] - vals[ptk+js[2]]),
-		g2 = w0*(vals[kmm]-vals[kpp]) + w1*(vals[km] - vals[kp]);
+	      const double g1 = w0*((*vj0++)-(*vj3++)) + w1*((*vj1++) - (*vj2++)),
+		g2 = w0*(v0-(*v4)) + w1*(v1 - v3);
 	      
-	      out[ptk*3]=g0; out[ptk*3+1] = g1; out[ptk*3+2] = g2;
+	      out[0] = g1; out[1] = g2;
+
+	      v0 = v1; v1=v2; v2=v3; v3=(*v4++); 
+	      if (col==2) // wrap
+		v4 -= n;
+	      
 	    }
-	}
+
+	  vj0 = vj1 - n;
+	  vj2 = vj3 - n;
+	  if (vj1==vals)
+	    vj1 -= n2;
+	  // cant be else if since ngrid could be 3
+	  if (vj3==vals)
+	    vj3 -= n2;
+	} 
     }
+
+  // Back to start
+  out -= 3*n*n2+1;
+  vals -= n*n2;
+
+  // In order to reduce pressure on cache, when doing the gradient in 1st (of 3)
+  // dimensions, loop over 2nd, 1st, 3rd 
+
+  const int out_jump = (n2-n)*3;
+
+  for (int j=0;j<ngrid;j++,vals+=n)
+    {
+      // Indices i-2, i-1,i+1,i+2 modulo ngrid
+      const double *vi0 = vals + (n-2)*n2,
+	*vi1 = vals + (n-1) * n2,
+	*vi2 = vals + n2,
+	*vi3 = vals + 2*n2;
+
+      for (int i=ngrid;i; out+=out_jump)
+	{
+
+	  // Find the gradients in the i-direction
+	  for (int k=0;k<ngrid; ++k, out+=3)
+	    out[0] = w0*(vi0[k] - vi3[k]) + w1*(vi1[k] - vi2[k]);
+
+
+	  // Iterate the pointers to next val (in i)
+	  vi0 = vi1; vi2 = vi3;
+	  vi1 += n2; vi3 += n2;
+	  // Wrap 
+	  if (i--==ngrid)
+	    vi1 = vals;
+	  if (i==2) // cant be else if since ngrid could be 3
+	    vi3 = vals;
+	}
+      out -= 3*n*(n2-1);
+    }
+  out -= n2*3; // back to start
+  vals -= n2;
+
 }
 void unpack_kgrid(const int n, const double *packed_vals, double *unpacked_vals)
 {
